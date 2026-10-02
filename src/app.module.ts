@@ -1,23 +1,47 @@
 import { Module } from '@nestjs/common';
-import { createObserveModule } from '@nestjs/observe';
-import { AppController } from './app.controller.js';
-import { AppService } from './app.service.js';
-import { ConfigModule } from '@nestjs/config';
-
-export const { ObserveModule, ObserveInstrument } = createObserveModule();
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { APP_GUARD } from '@nestjs/core';
+import { CacheModule } from '@nestjs/cache-manager';
+import { UserModule } from './user/user.module.js';
+import { AuthModule } from './auth/auth.module.js';
+import { JwtAuthGuard } from './auth/guards/jwt-auth/jwt-auth.guard.js';
+import KeyvRedis from '@keyv/redis';
+import jwtConfig from './config/jwt.config.js';
 
 @Module({
   imports: [
-    ObserveModule.forRoot({
-      appKey: 'YOUR_APP_KEY',
-      appSecret: 'YOUR_APP_SECRET',
-      serviceId: 'auth-project',
-    }),
     ConfigModule.forRoot({
-      envFilePath: [],
+      isGlobal: true,
+      load: [jwtConfig],
     }),
+    TypeOrmModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) => ({
+        type: 'postgres',
+        host: configService.get<string>('DB_HOST'),
+        port: configService.get<number>('DB_PORT'),
+        username: configService.get<string>('DB_USERNAME'),
+        password: configService.get<string>('DB_PASSWORD'),
+        database: configService.get<string>('DB_NAME'),
+        autoLoadEntities: true,
+      }),
+    }),
+    CacheModule.registerAsync({
+      isGlobal: true,
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) => ({
+        stores: [
+          new KeyvRedis(configService.get<string>('REDIS_URL')),
+        ],
+        ttl: 10 * 60 * 1000,
+      }),
+    }),
+    UserModule,
+    AuthModule,
   ],
-  controllers: [AppController],
-  providers: [AppService],
+  providers: [{ provide: APP_GUARD, useClass: JwtAuthGuard }],
 })
-export class AppModule {}
+export class AppModule { }
